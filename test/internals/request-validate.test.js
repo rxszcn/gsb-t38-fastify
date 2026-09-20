@@ -45,7 +45,7 @@ const requestSchema = {
 }
 
 test('#compileValidationSchema', async subtest => {
-  subtest.plan(7)
+  subtest.plan(9)
 
   await subtest.test('Should return a function - Route without schema', async t => {
     const fastify = Fastify()
@@ -245,6 +245,74 @@ test('#compileValidationSchema', async subtest => {
         t.assert.ok(req[kRouteContext][kRequestCacheValidateFns] instanceof WeakMap)
         t.assert.ok(req.compileValidationSchema(Object.assign({}, defaultSchema)) instanceof Function)
         t.assert.ok(req[kRouteContext][kRequestCacheValidateFns] instanceof WeakMap)
+
+        reply.send({ hello: 'world' })
+      })
+
+      await fastify.inject({
+        path: '/',
+        method: 'GET'
+      })
+    }
+  )
+
+  await subtest.test(
+    'Should keep a distinct validator fn per request part for the same schema',
+    async t => {
+      const fastify = Fastify()
+      const compilerCalls = []
+
+      t.plan(9)
+
+      fastify.get('/', {
+        validatorCompiler: ({ schema, httpPart }) => {
+          compilerCalls.push(httpPart)
+          return () => true
+        }
+      }, (req, reply) => {
+        const vBody = req.compileValidationSchema(defaultSchema, 'body')
+        const vQuery = req.compileValidationSchema(defaultSchema, 'querystring')
+        const vParams = req.compileValidationSchema(defaultSchema, 'params')
+
+        t.assert.notStrictEqual(vBody, vQuery)
+        t.assert.notStrictEqual(vBody, vParams)
+        t.assert.notStrictEqual(vQuery, vParams)
+        t.assert.deepStrictEqual(compilerCalls, ['body', 'querystring', 'params'])
+
+        // same schema + same part is cached by reference
+        t.assert.strictEqual(req.compileValidationSchema(defaultSchema, 'body'), vBody)
+        t.assert.strictEqual(compilerCalls.length, 3)
+        // part-less compile is its own coordinate
+        const vNone = req.compileValidationSchema(defaultSchema)
+        t.assert.notStrictEqual(vNone, vBody)
+        t.assert.strictEqual(req.compileValidationSchema(defaultSchema), vNone)
+        t.assert.strictEqual(req.getValidationFunction('params'), vParams)
+
+        reply.send({ hello: 'world' })
+      })
+
+      await fastify.inject({
+        path: '/',
+        method: 'GET'
+      })
+    }
+  )
+
+  await subtest.test(
+    'Should keep a distinct validator fn per part with the default compiler',
+    async t => {
+      const fastify = Fastify()
+
+      t.plan(4)
+
+      fastify.get('/', (req, reply) => {
+        const vBody = req.compileValidationSchema(defaultSchema, 'body')
+        const vQuery = req.compileValidationSchema(defaultSchema, 'querystring')
+
+        t.assert.notStrictEqual(vBody, vQuery)
+        t.assert.strictEqual(req.compileValidationSchema(defaultSchema, 'body'), vBody)
+        t.assert.ok(vBody({ hello: 'world' }))
+        t.assert.ok(!vBody({ hello: { nested: true } }))
 
         reply.send({ hello: 'world' })
       })
@@ -1264,7 +1332,7 @@ test('Nested Context', async subtest => {
             t.assert.strictEqual(schema, defaultSchema)
             t.assert.strictEqual(url, '/')
             t.assert.strictEqual(method, 'GET')
-            t.assert.strictEqual(httpPart, 'querystring')
+            t.assert.ok(httpPart === 'querystring' || httpPart === null)
 
             return input => {
               childCalled++
@@ -1273,7 +1341,7 @@ test('Nested Context', async subtest => {
             }
           }
 
-          t.plan(10)
+          t.plan(14)
 
           fastify.setValidatorCompiler(customParent)
 

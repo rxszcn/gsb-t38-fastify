@@ -63,7 +63,7 @@ function getResponseSchema () {
 }
 
 test('Reply#compileSerializationSchema', async t => {
-  t.plan(4)
+  t.plan(5)
 
   await t.test('Should return a serialization function', async t => {
     const fastify = Fastify()
@@ -223,6 +223,53 @@ test('Reply#compileSerializationSchema', async t => {
       method: 'GET'
     })
   })
+
+  await t.test('Should keep a distinct fn per (httpStatus, contentType) and register it for lookups',
+    async t => {
+      const fastify = Fastify()
+      const compilerCalls = []
+
+      t.plan(8)
+
+      fastify.get('/', {
+        serializerCompiler: ({ schema, httpStatus, contentType }) => {
+          compilerCalls.push(`${httpStatus ?? '-'}|${contentType ?? '-'}`)
+          const marker = compilerCalls.length
+          return input => JSON.stringify({ fn: marker, input })
+        }
+      }, (req, reply) => {
+        const schemaObj = getDefaultSchema()
+        const fnJson = reply.compileSerializationSchema(schemaObj, '2xx', 'application/json')
+        const fnV1 = reply.compileSerializationSchema(schemaObj, '2xx', 'application/vnd.v1+json')
+        const fn4xx = reply.compileSerializationSchema(schemaObj, '4xx')
+
+        t.assert.notStrictEqual(fnJson, fnV1)
+        t.assert.notStrictEqual(fnJson, fn4xx)
+        t.assert.deepStrictEqual(compilerCalls, [
+          '2xx|application/json',
+          '2xx|application/vnd.v1+json',
+          '4xx|-'
+        ])
+
+        t.assert.strictEqual(reply.compileSerializationSchema(schemaObj, '2xx', 'application/json'), fnJson)
+        t.assert.strictEqual(reply.getSerializationFunction('2xx', 'application/vnd.v1+json'), fnV1)
+        t.assert.strictEqual(reply.getSerializationFunction('4xx'), fn4xx)
+
+        t.assert.deepStrictEqual(
+          JSON.parse(reply.serializeInput({ hello: 'world' }, '2xx', 'application/vnd.v1+json')).fn,
+          2
+        )
+        t.assert.throws(() => reply.serializeInput({}, '500'), { code: 'FST_ERR_MISSING_SERIALIZATION_FN' })
+
+        reply.send({ hello: 'world' })
+      })
+
+      await fastify.inject({
+        path: '/',
+        method: 'GET'
+      })
+    }
+  )
 })
 
 test('Reply#getSerializationFunction', async t => {
