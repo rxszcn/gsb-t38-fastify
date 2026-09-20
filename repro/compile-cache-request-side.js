@@ -1,5 +1,4 @@
 'use strict'
-const path = require('node:path')
 const Fastify = require('../fastify.js')
 
 const f = Fastify()
@@ -26,8 +25,7 @@ f.post('/t', {
   reply.type('text/plain').send(JSON.stringify(out, null, 1))
 })
 
-f.listen({ port: 0, host: '127.0.0.1' }).then(async () => {
-  const r = await fetch(`http://127.0.0.1:${f.server.address().port}/t?a=1`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"a":"x"}' })
-  console.log(await r.text())
+f.inject({ url: '/t?a=1', method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"a":"x"}' }).then(async (r) => {
+  console.log(r.body)
   await f.close()
 }).catch((e) => { console.error('FAIL', e.message); process.exit(1) })
